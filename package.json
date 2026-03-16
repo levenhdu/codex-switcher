@@ -1,0 +1,38 @@
+{
+  "name": "codex-acm",
+  "version": "1.0.0",
+  "description": "Codex 多账号切换管理工具，支持 Team 账号和自定义 API",
+  "type": "module",
+  "bin": {
+    "codex-acm": "bin/cli.js",
+    "codex-switcher": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test src/**/*.test.js",
+    "start": "node bin/cli.js"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "account",
+    "switcher",
+    "cli",
+    "multi-account",
+    "chatgpt"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.0.0",
+    "@iarna/toml": "^2.2.5"
+  }
+}
