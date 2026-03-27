@@ -1,6 +1,6 @@
 {
   "name": "codex-acm",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Codex 多账号切换管理工具，支持 Team 账号和自定义 API",
   "type": "module",
   "bin": {
