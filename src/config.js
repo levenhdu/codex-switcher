@@ -52,7 +52,8 @@ export function applyCustomProvider(account) {
   const config = readConfig();
 
   // 设置 model_provider 指向自定义 provider
-  const providerKey = `custom_${sanitizeKey(account.id)}`;
+  // 若账号指定了 provider_key（如安装脚本生成的 "myprovider"），优先使用；否则自动生成
+  const providerKey = account.provider_key || `custom_${sanitizeKey(account.id)}`;
   config.model_provider = providerKey;
 
   // 如果账号指定了 model，则设置
@@ -80,10 +81,13 @@ export function applyCustomProvider(account) {
     base_url: account.base_url,
   };
 
-  // 认证方式
+  // 认证方式：
+  // 1. requires_openai_auth === true  → 使用 OpenAI OAuth
+  // 2. requires_openai_auth === false → 使用 auth.json（不设任何额外认证字段）
+  // 3. requires_openai_auth 未定义 + env_key 存在 → 使用环境变量
   if (account.requires_openai_auth) {
     providerConfig.requires_openai_auth = true;
-  } else if (account.env_key) {
+  } else if (account.env_key && account.requires_openai_auth === undefined) {
     providerConfig.env_key = account.env_key;
   }
 
@@ -113,18 +117,9 @@ export function resetToDefault(account) {
     config.model = account.model;
   }
 
-  // 清理所有 custom_ 开头的 provider（由本工具创建的）
-  if (config.model_providers) {
-    for (const key of Object.keys(config.model_providers)) {
-      if (key.startsWith('custom_')) {
-        delete config.model_providers[key];
-      }
-    }
-    // 如果 model_providers 为空，移除整个段
-    if (Object.keys(config.model_providers).length === 0) {
-      delete config.model_providers;
-    }
-  }
+  // Team 模式不需要任何自定义 provider，直接清除整个 model_providers 段
+  // 这样能同时清除 custom_xxx 和用户自定义 provider_key（如 "myprovider"）
+  delete config.model_providers;
 
   writeConfig(config);
 }

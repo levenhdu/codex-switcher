@@ -32,6 +32,10 @@ async function main() {
       case 'sw':
         await handleSwitch();
         break;
+      case 'model':
+      case 'mod':
+        await handleModel();
+        break;
       case 'remove':
       case 'rm':
         await handleRemove();
@@ -419,6 +423,7 @@ function printHelp() {
   console.log('    list, ls                列出所有账号');
   console.log('    add [--team|--custom]   添加账号');
   console.log('    switch, sw [别名|序号]  切换账号');
+  console.log('    model, mod [模型名]     切换当前模型（不切换账号）');
   console.log('    remove, rm              删除账号（交互式多选）');
   console.log('    import <path> [--alias] 导入 auth.json');
   console.log('    current, status         显示当前账号详情');
@@ -426,11 +431,14 @@ function printHelp() {
   console.log('    version, -v             显示版本');
   console.log();
   console.log('  示例:');
-  console.log('    codex-switcher add --team           添加 Team 账号');
-  console.log('    codex-switcher add --custom         添加自定义 API');
-  console.log('    codex-switcher switch               交互式切换');
-  console.log('    codex-switcher switch 1             切换到第 1 个账号');
-  console.log('    codex-switcher switch "天天API"     按别名切换');
+  console.log('    codex-switcher add --team                添加 Team 账号');
+  console.log('    codex-switcher add --custom              添加自定义 API');
+  console.log('    codex-switcher switch                    交互式切换');
+  console.log('    codex-switcher switch 1                  切换到第 1 个账号');
+  console.log('    codex-switcher switch "天天API"          按别名切换');
+  console.log('    codex-switcher model                     交互式选择模型');
+  console.log('    codex-switcher model gpt-5.4             直接设置模型');
+  console.log('    codex-switcher model gpt-5.4 --effort xhigh  同时设置推理深度');
   console.log('    codex-switcher import auth.json --alias "备用号"');
   console.log();
 }
@@ -442,6 +450,80 @@ function printVersion() {
   } catch {
     console.log('codex-switcher v1.0.0');
   }
+}
+
+// ─── model ────────────────────────────────────────
+async function handleModel() {
+  printLogo();
+
+  const { readConfig, writeConfig } = await import('../src/config.js');
+
+  // 内置常用模型列表
+  const MODEL_CHOICES = [
+    { name: 'gpt-5.4           (最新旗舰)', value: 'gpt-5.4' },
+    { name: 'gpt-5.3-codex     (编程专用)', value: 'gpt-5.3-codex' },
+    { name: 'gpt-4.5           (均衡)', value: 'gpt-4.5' },
+    { name: 'gpt-4o            (快速)', value: 'gpt-4o' },
+    { name: '✏️  自定义输入...', value: '__custom__' },
+  ];
+
+  const EFFORT_CHOICES = [
+    { name: 'xhigh  (最强推理)', value: 'xhigh' },
+    { name: 'high   (高推理)', value: 'high' },
+    { name: 'medium (中推理)', value: 'medium' },
+    { name: 'low    (快速)', value: 'low' },
+  ];
+
+  const { select, input } = await import('@inquirer/prompts');
+
+  // 解析命令行参数: model [模型名] [--effort <effort>]
+  let modelName = args[1] && !args[1].startsWith('--') ? args[1] : null;
+  const effortIdx = args.indexOf('--effort');
+  let effort = effortIdx >= 0 ? args[effortIdx + 1] : null;
+
+  // 读取当前配置
+  const config = readConfig();
+  const currentModel = config.model || '未设置';
+  const currentEffort = config.model_reasoning_effort || '未设置';
+
+  printInfo(`当前模型: ${currentModel}  推理深度: ${currentEffort}`);
+  console.log();
+
+  // 交互式选择模型（如未通过参数指定）
+  if (!modelName) {
+    const choice = await select({ message: '选择目标模型', choices: MODEL_CHOICES });
+    if (choice === '__custom__') {
+      modelName = await input({
+        message: '输入模型名称',
+        validate: (v) => v.length > 0 || '不能为空',
+      });
+    } else {
+      modelName = choice;
+    }
+  }
+
+  // 交互式选择推理深度（如未通过参数指定）
+  if (!effort) {
+    effort = await select({ message: '选择推理深度', choices: EFFORT_CHOICES });
+  }
+
+  // 写入 config.toml
+  config.model = modelName;
+  config.model_reasoning_effort = effort;
+  writeConfig(config);
+
+  // 同步更新 registry 中当前活跃账号的 model/effort
+  const registry = loadRegistry();
+  if (registry.active) {
+    const activeAcc = registry.accounts.find(a => a.id === registry.active);
+    if (activeAcc) {
+      activeAcc.model = modelName;
+      activeAcc.model_reasoning_effort = effort;
+      saveRegistry(registry);
+    }
+  }
+
+  printSuccess(`模型已切换: ${modelName}  推理深度: ${effort}`);
 }
 
 main();
