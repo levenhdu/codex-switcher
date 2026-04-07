@@ -6,9 +6,9 @@
  */
 import { readFileSync, existsSync, copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { loadRegistry, saveRegistry, addAccount, removeAccount, findAccount, setActive, ensureAccountDir } from '../src/registry.js';
-import { readAuthJson, extractAuthInfo, writeAuthJson, buildCustomApiAuth, backupAuthTo } from '../src/auth.js';
-import { switchAccount, backupCurrentAuth } from '../src/switcher.js';
+import { loadRegistry, saveRegistry, addAccount, findAccount, setActive, ensureAccountDir } from '../src/registry.js';
+import { readAuthJson, extractAuthInfo, buildCustomApiAuth, backupAuthTo } from '../src/auth.js';
+import { switchAccount, deleteAccounts } from '../src/switcher.js';
 import {
   printLogo, printAccountList, selectAccount, selectMultipleAccounts,
   inputCustomApiConfig, confirmAction, printSuccess, printError, printInfo,
@@ -103,8 +103,8 @@ async function handleAdd() {
     accountType = await select({
       message: '选择账号类型',
       choices: [
-        { name: '🏢 Team 账号（ChatGPT 登录）', value: 'team' },
-        { name: '🔑 自定义 API（第三方中转）', value: 'custom_api' },
+        { name: 'Team 账号', value: 'team', description: '使用 ChatGPT / Team 登录态' },
+        { name: '自定义 API', value: 'custom_api', description: '使用第三方或中转 API 配置' },
       ],
     });
   }
@@ -117,24 +117,24 @@ async function handleAdd() {
 }
 
 async function addTeamAccount(registry) {
-  const { select, input, confirm } = await import('@inquirer/prompts');
+  const { select, input } = await import('@inquirer/prompts');
 
   const method = await select({
     message: 'Team 账号添加方式',
     choices: [
-      { name: '📥 导入当前已登录的账号（读取 ~/.codex/auth.json）', value: 'current' },
-      { name: '🔐 运行 codex login 登录新账号', value: 'login' },
-      { name: '📁 从文件导入 auth.json', value: 'file' },
+      { name: '读取当前登录态', value: 'current', description: '从 ~/.codex/auth.json 导入' },
+      { name: '运行 codex login', value: 'login', description: '登录新账号后再导入' },
+      { name: '从文件导入', value: 'file', description: '手动指定 auth.json 路径' },
     ],
   });
 
   if (method === 'login') {
-    printInfo('正在启动 codex login...');
+    printInfo('启动 codex login');
     const { execSync } = await import('node:child_process');
     try {
       execSync('codex login', { stdio: 'inherit' });
     } catch {
-      printError('codex login 执行失败，请手动登录后使用「导入当前账号」');
+      printError('codex login 失败，完成登录后再执行“读取当前登录态”');
       return;
     }
   }
@@ -168,8 +168,8 @@ async function addTeamAccount(registry) {
   }
 
   const alias = await input({
-    message: '给这个账号起个别名',
-    default: info.email || 'Team 账号',
+    message: '账号名称',
+    default: info.email || 'team',
   });
 
   const account = {
@@ -193,7 +193,8 @@ async function addTeamAccount(registry) {
   addAccount(registry, account);
   saveRegistry(registry);
 
-  printSuccess(`已添加 Team 账号: ${alias} (${info.email || '未知邮箱'}) [${info.plan || '未知计划'}]`);
+  printSuccess(`已添加 team 账号: ${alias}`);
+  printInfo(`邮箱: ${info.email || '未识别'} | 计划: ${info.plan || '未识别'}`);
 }
 
 async function addCustomAccount(registry) {
@@ -216,13 +217,14 @@ async function addCustomAccount(registry) {
   addAccount(registry, account);
   saveRegistry(registry);
 
-  printSuccess(`已添加自定义 API 账号: ${account.alias}`);
+  printSuccess(`已添加 custom 账号: ${account.alias}`);
   printInfo(`Base URL: ${account.base_url}`);
   printInfo(`模型: ${account.model}`);
 
   if (account.env_key) {
     console.log();
-    printInfo(`请设置环境变量: export ${account.env_key}="${account.apiKey}"`);
+    printInfo(`此账号依赖环境变量 ${account.env_key}`);
+    printInfo(`请手动设置后再使用，例如: export ${account.env_key}="${account.apiKey}"`);
   }
 }
 
@@ -232,7 +234,7 @@ async function handleSwitch() {
   const registry = loadRegistry();
 
   if (registry.accounts.length === 0) {
-    printError('还没有添加任何账号，请先使用 codex-switcher add 添加');
+    printError('还没有账号，先运行 codex-switcher add');
     return;
   }
 
@@ -262,20 +264,30 @@ async function handleSwitch() {
   }
 
   if (account.id === registry.active) {
-    printInfo(`已经是当前活跃账号: ${account.alias || account.id}`);
+    // 即使注册表已标记为活跃，也重新应用配置，确保 config.toml 与注册表状态同步
+    printInfo('已是当前账号，重新写入配置');
+    await switchAccount(registry, account);
+    saveRegistry(registry);
+    const tag = account.type === 'team' ? 'team' : 'custom';
+    printSuccess(`当前账号: ${account.alias || account.id} (${tag})`);
+    if (account.type === 'team') {
+      printInfo(`邮箱: ${account.email || '未识别'} | 计划: ${account.plan || '未识别'}`);
+    } else {
+      printInfo(`URL: ${account.base_url} | 模型: ${account.model}`);
+    }
     return;
   }
 
   // 执行切换
-  switchAccount(registry, account);
+  await switchAccount(registry, account);
   setActive(registry, account.id);
   saveRegistry(registry);
 
-  const tag = account.type === 'team' ? '🏢 Team' : '🔑 Custom';
-  printSuccess(`已切换到 ${tag}: ${account.alias || account.id}`);
+  const tag = account.type === 'team' ? 'team' : 'custom';
+  printSuccess(`当前账号: ${account.alias || account.id} (${tag})`);
 
   if (account.type === 'team') {
-    printInfo(`邮箱: ${account.email || '未知'} | 计划: ${account.plan || '未知'}`);
+    printInfo(`邮箱: ${account.email || '未识别'} | 计划: ${account.plan || '未识别'}`);
   } else {
     printInfo(`URL: ${account.base_url} | 模型: ${account.model}`);
   }
@@ -288,7 +300,7 @@ async function handleRemove() {
 
   const selectedIds = await selectMultipleAccounts(registry);
   if (!selectedIds || selectedIds.length === 0) {
-    printInfo('未选择任何账号');
+    printInfo('未选择账号');
     return;
   }
 
@@ -303,12 +315,16 @@ async function handleRemove() {
     return;
   }
 
-  for (const id of selectedIds) {
-    removeAccount(registry, id);
-  }
+  const result = await deleteAccounts(registry, selectedIds);
   saveRegistry(registry);
 
-  printSuccess(`已删除 ${selectedIds.length} 个账号`);
+  if (result.removedActiveType === 'custom_api') {
+    printInfo('当前 custom 账号已删除，live API 凭据和受控 provider 已撤销');
+  } else if (result.activeDeleted) {
+    printInfo('当前账号已从注册表移除；live 登录态可能仍保留');
+  }
+
+  printSuccess(`已删除 ${selectedIds.length} 个账号及配置文件`);
 }
 
 // ─── import ───────────────────────────────────────
@@ -318,7 +334,7 @@ async function handleImport() {
 
   if (!filePath) {
     printError('请指定 auth.json 文件路径');
-    printInfo('用法: codex-switcher import <path> [--alias <别名>]');
+    printInfo('用法: codex-switcher import <path> [--alias <名称>]');
     return;
   }
 
@@ -373,7 +389,7 @@ async function handleImport() {
   addAccount(registry, account);
   saveRegistry(registry);
 
-  const tag = account.type === 'team' ? '🏢 Team' : '🔑 Custom';
+  const tag = account.type === 'team' ? 'team' : 'custom';
   printSuccess(`已导入 ${tag} 账号: ${account.alias}`);
 }
 
@@ -417,28 +433,27 @@ function syncCurrentAuth(registry) {
 
 function printHelp() {
   printLogo();
-  console.log('  用法: codex-switcher <命令> [选项]');
+  console.log('  usage');
+  console.log('    codex-switcher <command> [options]');
   console.log();
-  console.log('  命令:');
-  console.log('    list, ls                列出所有账号');
+  console.log('  commands');
+  console.log('    list, ls                查看已保存账号');
   console.log('    add [--team|--custom]   添加账号');
   console.log('    switch, sw [别名|序号]  切换账号');
-  console.log('    model, mod [模型名]     切换当前模型（不切换账号）');
-  console.log('    remove, rm              删除账号（交互式多选）');
+  console.log('    model, mod [模型名]     设置当前模型');
+  console.log('    remove, rm              删除账号');
   console.log('    import <path> [--alias] 导入 auth.json');
-  console.log('    current, status         显示当前账号详情');
+  console.log('    current, status         查看当前账号');
   console.log('    help, -h                显示帮助');
   console.log('    version, -v             显示版本');
   console.log();
-  console.log('  示例:');
-  console.log('    codex-switcher add --team                添加 Team 账号');
-  console.log('    codex-switcher add --custom              添加自定义 API');
-  console.log('    codex-switcher switch                    交互式切换');
-  console.log('    codex-switcher switch 1                  切换到第 1 个账号');
-  console.log('    codex-switcher switch "天天API"          按别名切换');
-  console.log('    codex-switcher model                     交互式选择模型');
-  console.log('    codex-switcher model gpt-5.4             直接设置模型');
-  console.log('    codex-switcher model gpt-5.4 --effort xhigh  同时设置推理深度');
+  console.log('  examples');
+  console.log('    codex-switcher add --team');
+  console.log('    codex-switcher add --custom');
+  console.log('    codex-switcher switch');
+  console.log('    codex-switcher switch 1');
+  console.log('    codex-switcher switch "备用账号"');
+  console.log('    codex-switcher model gpt-5.4 --effort xhigh');
   console.log('    codex-switcher import auth.json --alias "备用号"');
   console.log();
 }
@@ -460,18 +475,18 @@ async function handleModel() {
 
   // 内置常用模型列表
   const MODEL_CHOICES = [
-    { name: 'gpt-5.4           (最新旗舰)', value: 'gpt-5.4' },
-    { name: 'gpt-5.3-codex     (编程专用)', value: 'gpt-5.3-codex' },
-    { name: 'gpt-4.5           (均衡)', value: 'gpt-4.5' },
-    { name: 'gpt-4o            (快速)', value: 'gpt-4o' },
-    { name: '✏️  自定义输入...', value: '__custom__' },
+    { name: 'gpt-5.4', value: 'gpt-5.4', description: 'flagship' },
+    { name: 'gpt-5.3-codex', value: 'gpt-5.3-codex', description: 'coding' },
+    { name: 'gpt-4.5', value: 'gpt-4.5', description: 'balanced' },
+    { name: 'gpt-4o', value: 'gpt-4o', description: 'fast' },
+    { name: '自定义输入', value: '__custom__' },
   ];
 
   const EFFORT_CHOICES = [
-    { name: 'xhigh  (最强推理)', value: 'xhigh' },
-    { name: 'high   (高推理)', value: 'high' },
-    { name: 'medium (中推理)', value: 'medium' },
-    { name: 'low    (快速)', value: 'low' },
+    { name: 'xhigh', value: 'xhigh', description: '最强推理' },
+    { name: 'high', value: 'high', description: '高推理' },
+    { name: 'medium', value: 'medium', description: '中等推理' },
+    { name: 'low', value: 'low', description: '更快' },
   ];
 
   const { select, input } = await import('@inquirer/prompts');
@@ -486,7 +501,7 @@ async function handleModel() {
   const currentModel = config.model || '未设置';
   const currentEffort = config.model_reasoning_effort || '未设置';
 
-  printInfo(`当前模型: ${currentModel}  推理深度: ${currentEffort}`);
+  printInfo(`当前模型: ${currentModel} | 推理: ${currentEffort}`);
   console.log();
 
   // 交互式选择模型（如未通过参数指定）
@@ -523,7 +538,7 @@ async function handleModel() {
     }
   }
 
-  printSuccess(`模型已切换: ${modelName}  推理深度: ${effort}`);
+  printSuccess(`模型已切换: ${modelName} | 推理: ${effort}`);
 }
 
 main();

@@ -1,9 +1,10 @@
 /**
  * auth.json 处理和 JWT Token 解析
  */
-import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { atomicWriteFile, snapshotFile, restoreFile } from './file-utils.js';
 
 /**
  * 获取 CODEX_HOME 路径
@@ -39,11 +40,7 @@ export function readAuthJson() {
  */
 export function writeAuthJson(data) {
   const path = getAuthPath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8');
+  atomicWriteFile(path, JSON.stringify(data, null, 2));
 }
 
 /**
@@ -66,8 +63,28 @@ export function restoreAuthFrom(srcDir) {
   if (!existsSync(src)) {
     throw new Error(`账号认证文件不存在: ${src}`);
   }
-  const dest = getAuthPath();
-  copyFileSync(src, dest);
+  atomicWriteFile(getAuthPath(), readFileSync(src, 'utf-8'));
+}
+
+/**
+ * 快照 live auth.json，用于切换失败回滚
+ */
+export function snapshotAuthFile() {
+  return snapshotFile(getAuthPath());
+}
+
+/**
+ * 恢复 live auth.json 到快照内容
+ */
+export function restoreAuthFile(snapshot) {
+  restoreFile(getAuthPath(), snapshot);
+}
+
+/**
+ * 撤销当前 live API Key 凭据
+ */
+export function clearAuthJson() {
+  writeAuthJson({});
 }
 
 /**

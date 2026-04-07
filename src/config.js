@@ -2,10 +2,11 @@
  * config.toml 读写管理
  * 切换账号时修改 model_provider 相关配置，保留其他用户设置
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import TOML from '@iarna/toml';
 import { getCodexHome } from './auth.js';
+import { atomicWriteFile, snapshotFile, restoreFile } from './file-utils.js';
 
 /**
  * 获取 config.toml 路径
@@ -24,8 +25,8 @@ export function readConfig() {
   }
   try {
     return TOML.parse(readFileSync(path, 'utf-8'));
-  } catch {
-    return {};
+  } catch (error) {
+    throw new Error(`无法安全解析 config.toml，请先修复后再重试: ${error.message}`);
   }
 }
 
@@ -34,26 +35,55 @@ export function readConfig() {
  */
 export function writeConfig(config) {
   const path = getConfigPath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(path, TOML.stringify(config), 'utf-8');
+  atomicWriteFile(path, TOML.stringify(config));
 }
 
-// codex-switcher 管理的 config 字段（切换时会修改这些字段）
-const MANAGED_KEYS = ['model_provider'];
+export function getProviderKey(account) {
+  return account?.provider_key || `custom_${sanitizeKey(account?.id || '')}`;
+}
+
+export function getManagedProviderKeys(accounts = []) {
+  const keys = new Set(['custom']);
+
+  for (const account of accounts) {
+    if (!account || account.type === 'team') continue;
+    keys.add(getProviderKey(account));
+  }
+
+  return [...keys];
+}
+
+function removeManagedProviders(config, managedProviderKeys, keepProviderKey = null) {
+  const managedKeys = new Set(managedProviderKeys);
+
+  if (config.model_provider && managedKeys.has(config.model_provider) && config.model_provider !== keepProviderKey) {
+    delete config.model_provider;
+  }
+
+  if (config.model_providers) {
+    for (const providerKey of managedKeys) {
+      if (providerKey !== keepProviderKey && config.model_providers[providerKey]) {
+        delete config.model_providers[providerKey];
+      }
+    }
+  }
+
+  if (config.model_providers && Object.keys(config.model_providers).length === 0) {
+    delete config.model_providers;
+  }
+}
 
 /**
  * 应用自定义 API provider 配置到 config.toml
  * 只修改 provider 相关字段，保留其他用户配置
  */
-export function applyCustomProvider(account) {
+export function applyCustomProvider(account, managedProviderKeys = []) {
   const config = readConfig();
 
   // 设置 model_provider 指向自定义 provider
   // 若账号指定了 provider_key（如安装脚本生成的 "myprovider"），优先使用；否则自动生成
-  const providerKey = account.provider_key || `custom_${sanitizeKey(account.id)}`;
+  const providerKey = getProviderKey(account);
+  removeManagedProviders(config, managedProviderKeys, providerKey);
   config.model_provider = providerKey;
 
   // 如果账号指定了 model，则设置
@@ -106,20 +136,15 @@ export function applyCustomProvider(account) {
  * 恢复为默认 OpenAI provider（Team 账号模式）
  * 移除 model_provider 和自定义 provider 配置
  */
-export function resetToDefault(account) {
+export function resetToDefault(managedProviderKeys = [], teamAccount = null) {
   const config = readConfig();
 
-  // 移除 model_provider 设置（让 Codex 使用默认 OpenAI）
-  delete config.model_provider;
-
   // 如果 Team 账号有指定 model，设置它
-  if (account?.model) {
-    config.model = account.model;
+  if (teamAccount?.type === 'team' && teamAccount.model) {
+    config.model = teamAccount.model;
   }
 
-  // Team 模式不需要任何自定义 provider，直接清除整个 model_providers 段
-  // 这样能同时清除 custom_xxx 和用户自定义 provider_key（如 "myprovider"）
-  delete config.model_providers;
+  removeManagedProviders(config, managedProviderKeys);
 
   writeConfig(config);
 }
@@ -143,4 +168,18 @@ export function snapshotProviderConfig() {
     review_model: config.review_model,
     model_reasoning_effort: config.model_reasoning_effort,
   };
+}
+
+/**
+ * 快照 live config.toml，用于切换失败回滚
+ */
+export function snapshotConfigFile() {
+  return snapshotFile(getConfigPath());
+}
+
+/**
+ * 恢复 live config.toml 到快照内容
+ */
+export function restoreConfigFile(snapshot) {
+  restoreFile(getConfigPath(), snapshot);
 }

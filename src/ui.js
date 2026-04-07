@@ -23,16 +23,73 @@ const colors = {
 
 const c = (color, text) => `${colors[color]}${text}${colors.reset}`;
 
+function getTerminalWidth() {
+  const columns = process.stdout.columns || 80;
+  return Math.max(64, Math.min(columns, 108));
+}
+
+function getContentWidth() {
+  return getTerminalWidth() - 2;
+}
+
+function fit(text, width) {
+  const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (value.length <= width) {
+    return value.padEnd(width);
+  }
+  if (width <= 1) {
+    return value.slice(0, width);
+  }
+  return `${value.slice(0, width - 1)}…`;
+}
+
+function printDivider(width = getContentWidth()) {
+  console.log(c('dim', `  ${'─'.repeat(width)}`));
+}
+
+function formatTypeLabel(type) {
+  return type === 'team' ? 'team' : 'custom';
+}
+
+function formatAccountMeta(account) {
+  if (account.type === 'team') {
+    const detail = [account.email || '未识别邮箱', account.plan || null].filter(Boolean);
+    return detail.join(' · ');
+  }
+
+  const detail = [account.base_url || '未配置 base_url', account.model || null].filter(Boolean);
+  return detail.join(' · ');
+}
+
+function getListLayout() {
+  const width = getContentWidth();
+  const indexWidth = 4;
+  const currentWidth = 6;
+  const typeWidth = 10;
+  const nameWidth = Math.max(14, Math.min(22, Math.floor(width * 0.24)));
+  const detailWidth = Math.max(20, width - indexWidth - currentWidth - typeWidth - nameWidth);
+
+  return {
+    width,
+    indexWidth,
+    currentWidth,
+    typeWidth,
+    nameWidth,
+    detailWidth,
+  };
+}
+
+function printField(label, value) {
+  console.log(`  ${fit(`${label}:`, 10)} ${value}`);
+}
+
 /**
  * 打印 Logo
  */
 export function printLogo() {
   console.log();
-  console.log(c('cyan', '  ╔═══════════════════════════════════════╗'));
-  console.log(c('cyan', '  ║') + c('bold', '   🔑 Codex Account Manager            ') + c('cyan', '║'));
-  console.log(c('cyan', '  ║') + c('dim', '   支持 Team 账号 + 自定义 API          ') + c('cyan', '║'));
-  console.log(c('cyan', '  ╚═══════════════════════════════════════╝'));
-  console.log();
+  console.log(`  ${c('bold', 'codex-switcher')}`);
+  printDivider(Math.min(34, getContentWidth()));
 }
 
 /**
@@ -42,42 +99,36 @@ export function printAccountList(registry) {
   const { accounts, active } = registry;
 
   if (accounts.length === 0) {
-    console.log(c('yellow', '  还没有添加任何账号。'));
+    console.log(c('yellow', '  无已保存账号'));
     console.log(c('dim', '  使用 codex-switcher add 添加账号'));
     return;
   }
 
-  // 表头
-  const header = `  ${'#'.padEnd(4)}${'状态'.padEnd(6)}${'类型'.padEnd(12)}${'别名'.padEnd(20)}${'详情'}`;
-  console.log(c('dim', '  ' + '─'.repeat(72)));
+  const activeAccount = accounts.find((acc) => acc.id === active);
+  const summary = activeAccount
+    ? `  已保存 ${accounts.length} 个账号 · 当前 ${activeAccount.alias || activeAccount.id} · ${formatTypeLabel(activeAccount.type)}`
+    : `  已保存 ${accounts.length} 个账号`;
+
+  console.log(c('dim', summary));
+  const layout = getListLayout();
+  printDivider(layout.width);
+  const header = `  ${fit('#', layout.indexWidth)}${fit('当前', layout.currentWidth)}${fit('类型', layout.typeWidth)}${fit('名称', layout.nameWidth)}${fit('详情', layout.detailWidth)}`;
   console.log(c('bold', header));
-  console.log(c('dim', '  ' + '─'.repeat(72)));
+  printDivider(layout.width);
 
   accounts.forEach((acc, idx) => {
-    const num = String(idx + 1).padEnd(4);
+    const num = fit(String(idx + 1), layout.indexWidth);
     const isActive = acc.id === active;
-    const status = isActive ? c('green', '● 活跃') : c('dim', '  ─   ');
-    const type = acc.type === 'team'
-      ? c('blue', 'Team'.padEnd(10))
-      : c('magenta', 'Custom'.padEnd(10));
-    const alias = (acc.alias || acc.id).padEnd(18);
+    const status = isActive ? c('green', fit('*', layout.currentWidth)) : c('dim', fit('', layout.currentWidth));
+    const typeRaw = fit(formatTypeLabel(acc.type), layout.typeWidth);
+    const type = acc.type === 'team' ? c('blue', typeRaw) : c('magenta', typeRaw);
+    const alias = fit(acc.alias || acc.id, layout.nameWidth);
+    const detail = fit(formatAccountMeta(acc), layout.detailWidth);
 
-    let detail = '';
-    if (acc.type === 'team') {
-      const email = acc.email || '未知';
-      const plan = acc.plan ? c('yellow', `[${acc.plan}]`) : '';
-      detail = `${email} ${plan}`;
-    } else {
-      const url = acc.base_url || '未设置';
-      const model = acc.model ? c('cyan', `[${acc.model}]`) : '';
-      detail = `${url} ${model}`;
-    }
-
-    console.log(`  ${num}${status}  ${type}${alias}${detail}`);
+    console.log(`  ${num}${status}${type}${alias}${detail}`);
   });
 
-  console.log(c('dim', '  ' + '─'.repeat(72)));
-  console.log();
+  printDivider(layout.width);
 }
 
 /**
@@ -86,30 +137,21 @@ export function printAccountList(registry) {
  */
 export async function selectAccount(registry, message = '选择账号') {
   if (registry.accounts.length === 0) {
-    console.log(c('yellow', '  没有可选的账号'));
+    console.log(c('yellow', '  没有可选账号'));
     return null;
   }
 
   const choices = registry.accounts.map((acc, idx) => {
     const isActive = acc.id === registry.active;
-    const tag = acc.type === 'team' ? '🏢 Team' : '🔑 Custom';
-    const activeTag = isActive ? ' ✅' : '';
-    let desc = '';
-    if (acc.type === 'team') {
-      desc = acc.email || '未知邮箱';
-      if (acc.plan) desc += ` [${acc.plan}]`;
-    } else {
-      desc = acc.base_url || '未配置';
-      if (acc.model) desc += ` [${acc.model}]`;
-    }
 
     return {
-      name: `${tag} ${acc.alias || acc.id} — ${desc}${activeTag}`,
+      name: `${idx + 1}. ${acc.alias || acc.id}${isActive ? '  [current]' : ''}`,
+      description: `${formatTypeLabel(acc.type)} · ${formatAccountMeta(acc)}`,
       value: acc,
     };
   });
 
-  return await select({ message, choices });
+  return await select({ message, choices, pageSize: Math.min(10, choices.length) });
 }
 
 /**
@@ -117,16 +159,15 @@ export async function selectAccount(registry, message = '选择账号') {
  */
 export async function selectMultipleAccounts(registry) {
   if (registry.accounts.length === 0) {
-    console.log(c('yellow', '  没有可删除的账号'));
+    console.log(c('yellow', '  没有可删除账号'));
     return [];
   }
 
   const choices = registry.accounts.map((acc) => {
-    const tag = acc.type === 'team' ? '🏢' : '🔑';
     const isActive = acc.id === registry.active;
-    const desc = acc.type === 'team' ? (acc.email || '未知') : (acc.base_url || '未配置');
     return {
-      name: `${tag} ${acc.alias || acc.id} — ${desc}${isActive ? ' (当前活跃)' : ''}`,
+      name: `${acc.alias || acc.id}${isActive ? '  [current]' : ''}`,
+      description: `${formatTypeLabel(acc.type)} · ${formatAccountMeta(acc)}`,
       value: acc.id,
     };
   });
@@ -142,17 +183,16 @@ export async function selectMultipleAccounts(registry) {
  */
 export async function inputCustomApiConfig() {
   console.log();
-  console.log(c('cyan', '  📝 配置自定义 API 账号'));
-  console.log(c('dim', '  请输入以下信息：'));
-  console.log();
+  console.log(c('bold', '  新建自定义 API'));
+  printDivider(Math.min(30, getContentWidth()));
 
   const alias = await input({
-    message: '别名（用于标识此账号）',
-    default: '自定义 API',
+    message: '账号名称',
+    default: 'custom-api',
   });
 
   const base_url = await input({
-    message: 'API Base URL',
+    message: 'Base URL',
     default: 'https://api.example.com',
     validate: (v) => v.startsWith('http') || '请输入有效的 URL',
   });
@@ -168,9 +208,9 @@ export async function inputCustomApiConfig() {
   });
 
   const wire_api = await select({
-    message: 'Wire API 协议',
+    message: '协议',
     choices: [
-      { name: 'responses (推荐)', value: 'responses' },
+      { name: 'responses', value: 'responses', description: '默认' },
       { name: 'chat', value: 'chat' },
     ],
   });
@@ -178,18 +218,18 @@ export async function inputCustomApiConfig() {
   const authMethod = await select({
     message: '认证方式',
     choices: [
-      { name: '🔑 通过环境变量传递 Key（推荐，避免与 Team 认证冲突）', value: 'env_key' },
-      { name: '⚠️  通过 OpenAI OAuth 认证（仅限需要 Team Token 的代理）', value: 'openai_auth' },
+      { name: '环境变量', value: 'env_key', description: '推荐。避免覆盖 Team 登录态' },
+      { name: 'OpenAI Auth', value: 'openai_auth', description: '仅在代理必须复用 Team Token 时使用' },
     ],
   });
 
   const review_model = await input({
-    message: 'Review 模型（可选，直接回车跳过）',
+    message: 'Review 模型（可留空）',
     default: '',
   });
 
   const model_reasoning_effort = await select({
-    message: '推理深度',
+    message: '推理强度',
     choices: [
       { name: 'high', value: 'high' },
       { name: 'xhigh', value: 'xhigh' },
@@ -210,7 +250,7 @@ export async function inputCustomApiConfig() {
     review_model: review_model || undefined,
     wire_api,
     model_reasoning_effort,
-    requires_openai_auth: authMethod === 'openai_auth',
+    requires_openai_auth: authMethod === 'openai_auth' ? true : undefined,
     env_key: authMethod === 'env_key' ? `CODEX_KEY_${alias.replace(/\s+/g, '_').toUpperCase()}` : undefined,
     created_at: new Date().toISOString(),
   };
@@ -227,52 +267,51 @@ export async function confirmAction(message) {
  * 显示成功消息
  */
 export function printSuccess(message) {
-  console.log(c('green', `  ✅ ${message}`));
+  console.log(`  ${c('green', '[ok]')} ${message}`);
 }
 
 /**
  * 显示错误消息
  */
 export function printError(message) {
-  console.log(c('red', `  ❌ ${message}`));
+  console.log(`  ${c('red', '[x]')} ${message}`);
 }
 
 /**
  * 显示信息
  */
 export function printInfo(message) {
-  console.log(c('cyan', `  ℹ️  ${message}`));
+  console.log(`  ${c('cyan', '[i]')} ${message}`);
 }
 
 /**
  * 显示当前账号详情
  */
 export function printAccountDetail(account) {
-  console.log();
-  console.log(c('bold', '  📋 当前活跃账号'));
-  console.log(c('dim', '  ' + '─'.repeat(40)));
+  console.log(c('bold', '  当前账号'));
+  printDivider(Math.min(44, getContentWidth()));
 
   if (!account) {
     console.log(c('yellow', '  未设置活跃账号'));
+    printDivider(Math.min(44, getContentWidth()));
     return;
   }
 
-  console.log(`  类型:  ${account.type === 'team' ? c('blue', '🏢 Team') : c('magenta', '🔑 Custom API')}`);
-  console.log(`  别名:  ${c('bold', account.alias || account.id)}`);
+  printField('类型', account.type === 'team' ? c('blue', 'team') : c('magenta', 'custom'));
+  printField('名称', c('bold', account.alias || account.id));
 
   if (account.type === 'team') {
-    console.log(`  邮箱:  ${account.email || '未知'}`);
-    console.log(`  计划:  ${account.plan ? c('yellow', account.plan) : '未知'}`);
+    printField('邮箱', account.email || '未识别');
+    printField('计划', account.plan ? c('yellow', account.plan) : '未识别');
   } else {
-    console.log(`  URL:   ${account.base_url || '未设置'}`);
-    console.log(`  模型:  ${account.model || '默认'}`);
-    console.log(`  协议:  ${account.wire_api || 'responses'}`);
+    printField('Base URL', account.base_url || '未设置');
+    printField('模型', account.model || '默认');
+    printField('协议', account.wire_api || 'responses');
     if (account.apiKey) {
-      console.log(`  Key:   ${maskSecret(account.apiKey)}`);
+      printField('API Key', maskSecret(account.apiKey));
     }
   }
 
-  console.log(`  添加于: ${account.created_at || '未知'}`);
-  console.log(c('dim', '  ' + '─'.repeat(40)));
-  console.log();
+  printField('添加于', account.created_at || '未知');
+  printDivider(Math.min(44, getContentWidth()));
 }
