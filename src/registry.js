@@ -6,6 +6,47 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from
 import { join } from 'node:path';
 import { getCodexHome } from './auth.js';
 
+function normalizeUseCount(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function normalizeLastUsedAt(value) {
+  if (!value) {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return undefined;
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function normalizeAccount(account) {
+  const normalized = { ...account };
+  const useCount = normalizeUseCount(account?.use_count);
+  const lastUsedAt = normalizeLastUsedAt(account?.last_used_at);
+
+  if (useCount === undefined) {
+    delete normalized.use_count;
+  } else {
+    normalized.use_count = useCount;
+  }
+
+  if (lastUsedAt === undefined) {
+    delete normalized.last_used_at;
+  } else {
+    normalized.last_used_at = lastUsedAt;
+  }
+
+  return normalized;
+}
+
 /**
  * 获取 accounts 目录路径
  */
@@ -29,7 +70,11 @@ export function loadRegistry() {
     return { active: null, accounts: [] };
   }
   try {
-    return JSON.parse(readFileSync(path, 'utf-8'));
+    const data = JSON.parse(readFileSync(path, 'utf-8'));
+    return {
+      active: data?.active || null,
+      accounts: Array.isArray(data?.accounts) ? data.accounts.map(normalizeAccount) : [],
+    };
   } catch {
     return { active: null, accounts: [] };
   }
@@ -73,9 +118,9 @@ export function addAccount(registry, account) {
   const idx = registry.accounts.findIndex(a => a.id === account.id);
   if (idx >= 0) {
     // 更新已有账号
-    registry.accounts[idx] = { ...registry.accounts[idx], ...account };
+    registry.accounts[idx] = normalizeAccount({ ...registry.accounts[idx], ...account });
   } else {
-    registry.accounts.push(account);
+    registry.accounts.push(normalizeAccount(account));
   }
 }
 
@@ -107,4 +152,20 @@ export function findAccount(registry, query) {
  */
 export function setActive(registry, accountId) {
   registry.active = accountId;
+}
+
+/**
+ * 记录账号使用历史
+ */
+export function markAccountUsed(registry, accountId, usedAt = new Date().toISOString()) {
+  const account = registry.accounts.find(a => a.id === accountId);
+  if (!account) {
+    return null;
+  }
+
+  const nextCount = normalizeUseCount(account.use_count) ?? 0;
+  account.last_used_at = normalizeLastUsedAt(usedAt) || new Date().toISOString();
+  account.use_count = nextCount + 1;
+  registry.active = accountId;
+  return account;
 }

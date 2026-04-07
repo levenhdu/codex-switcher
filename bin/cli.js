@@ -6,7 +6,7 @@
  */
 import { readFileSync, existsSync, copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { loadRegistry, saveRegistry, addAccount, findAccount, setActive, ensureAccountDir } from '../src/registry.js';
+import { loadRegistry, saveRegistry, addAccount, findAccount, ensureAccountDir } from '../src/registry.js';
 import { readAuthJson, extractAuthInfo, buildCustomApiAuth, backupAuthTo } from '../src/auth.js';
 import { switchAccount, deleteAccounts } from '../src/switcher.js';
 import {
@@ -280,7 +280,6 @@ async function handleSwitch() {
 
   // 执行切换
   await switchAccount(registry, account);
-  setActive(registry, account.id);
   saveRegistry(registry);
 
   const tag = account.type === 'team' ? 'team' : 'custom';

@@ -3,7 +3,7 @@
  * 同时更新 auth.json 和 config.toml
  */
 import { readFileSync, existsSync, copyFileSync, rmSync } from 'node:fs';
-import { ensureAccountDir, getAccountDir, removeAccount } from './registry.js';
+import { ensureAccountDir, getAccountDir, removeAccount, markAccountUsed } from './registry.js';
 import {
   writeAuthJson, backupAuthTo, restoreAuthFrom, clearAuthJson,
   buildCustomApiAuth, extractAuthInfo, snapshotAuthFile, restoreAuthFile,
@@ -120,6 +120,8 @@ export async function switchAccount(registry, account) {
   } else {
     throw new Error(`未知账号类型: ${account.type}`);
   }
+
+  markAccountUsed(registry, account.id);
 }
 
 /**

@@ -61,6 +61,46 @@ function formatAccountMeta(account) {
   return detail.join(' · ');
 }
 
+function getLastUsedTimestamp(account) {
+  const timestamp = Date.parse(account?.last_used_at || '');
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function getUseCount(account) {
+  const parsed = Number.parseInt(account?.use_count, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+export function sortAccountsForSelection(accounts = []) {
+  return accounts
+    .map((account, index) => ({
+      account,
+      index,
+      lastUsedTimestamp: getLastUsedTimestamp(account),
+      useCount: getUseCount(account),
+    }))
+    .sort((left, right) => {
+      const leftHasHistory = left.lastUsedTimestamp !== null || left.useCount > 0;
+      const rightHasHistory = right.lastUsedTimestamp !== null || right.useCount > 0;
+      if (leftHasHistory !== rightHasHistory) {
+        return rightHasHistory ? 1 : -1;
+      }
+
+      if (left.lastUsedTimestamp !== right.lastUsedTimestamp) {
+        const leftTimestamp = left.lastUsedTimestamp ?? Number.NEGATIVE_INFINITY;
+        const rightTimestamp = right.lastUsedTimestamp ?? Number.NEGATIVE_INFINITY;
+        return rightTimestamp - leftTimestamp;
+      }
+
+      if (left.useCount !== right.useCount) {
+        return right.useCount - left.useCount;
+      }
+
+      return left.index - right.index;
+    })
+    .map(item => item.account);
+}
+
 function getListLayout() {
   const width = getContentWidth();
   const indexWidth = 4;
@@ -141,7 +181,8 @@ export async function selectAccount(registry, message = '选择账号') {
     return null;
   }
 
-  const choices = registry.accounts.map((acc, idx) => {
+  const sortedAccounts = sortAccountsForSelection(registry.accounts);
+  const choices = sortedAccounts.map((acc, idx) => {
     const isActive = acc.id === registry.active;
 
     return {
@@ -163,7 +204,7 @@ export async function selectMultipleAccounts(registry) {
     return [];
   }
 
-  const choices = registry.accounts.map((acc) => {
+  const choices = sortAccountsForSelection(registry.accounts).map((acc) => {
     const isActive = acc.id === registry.active;
     return {
       name: `${acc.alias || acc.id}${isActive ? '  [current]' : ''}`,
@@ -175,6 +216,7 @@ export async function selectMultipleAccounts(registry) {
   return await checkbox({
     message: '选择要删除的账号（空格选中，回车确认）',
     choices,
+    pageSize: Math.min(10, choices.length),
   });
 }
 
