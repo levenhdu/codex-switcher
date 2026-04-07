@@ -8,6 +8,7 @@ import { readFileSync, existsSync, copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadRegistry, saveRegistry, addAccount, findAccount, ensureAccountDir } from '../src/registry.js';
 import { readAuthJson, extractAuthInfo, buildCustomApiAuth, backupAuthTo } from '../src/auth.js';
+import { writeConfigBundle, importConfigBundle } from '../src/config-bundle.js';
 import { switchAccount, deleteAccounts } from '../src/switcher.js';
 import {
   printLogo, printAccountList, selectAccount, selectMultipleAccounts,
@@ -42,6 +43,12 @@ async function main() {
         break;
       case 'import':
         await handleImport();
+        break;
+      case 'export-config':
+        await handleExportConfig();
+        break;
+      case 'import-config':
+        await handleImportConfig();
         break;
       case 'current':
       case 'status':
@@ -392,6 +399,48 @@ async function handleImport() {
   printSuccess(`已导入 ${tag} 账号: ${account.alias}`);
 }
 
+// ─── export-config / import-config ───────────────
+async function handleExportConfig() {
+  printLogo();
+  const filePath = args[1];
+
+  if (!filePath) {
+    printError('请指定导出文件路径');
+    printInfo('用法: codex-switcher export-config <path>');
+    return;
+  }
+
+  const absPath = resolve(filePath);
+  const registry = loadRegistry();
+  const bundle = writeConfigBundle(absPath, registry);
+
+  printSuccess(`已导出 ${bundle.accounts.length} 个账号到: ${absPath}`);
+  printInfo('导出文件包含敏感凭据，请妥善保管');
+}
+
+async function handleImportConfig() {
+  printLogo();
+  const filePath = args[1];
+
+  if (!filePath) {
+    printError('请指定配置包文件路径');
+    printInfo('用法: codex-switcher import-config <path>');
+    return;
+  }
+
+  const absPath = resolve(filePath);
+  if (!existsSync(absPath)) {
+    printError(`文件不存在: ${absPath}`);
+    return;
+  }
+
+  const registry = loadRegistry();
+  const result = importConfigBundle(absPath, registry);
+
+  printSuccess(`已导入 ${result.imported_count} 个账号配置`);
+  printInfo('导入不会直接修改当前 live auth.json 或 config.toml');
+}
+
 // ─── current ──────────────────────────────────────
 async function handleCurrent() {
   printLogo();
@@ -442,6 +491,8 @@ function printHelp() {
   console.log('    model, mod [模型名]     设置当前模型');
   console.log('    remove, rm              删除账号');
   console.log('    import <path> [--alias] 导入 auth.json');
+  console.log('    export-config <path>    导出已保存账号配置');
+  console.log('    import-config <path>    导入账号配置包');
   console.log('    current, status         查看当前账号');
   console.log('    help, -h                显示帮助');
   console.log('    version, -v             显示版本');
@@ -454,6 +505,8 @@ function printHelp() {
   console.log('    codex-switcher switch "备用账号"');
   console.log('    codex-switcher model gpt-5.4 --effort xhigh');
   console.log('    codex-switcher import auth.json --alias "备用号"');
+  console.log('    codex-switcher export-config ./codex-switcher-config.json');
+  console.log('    codex-switcher import-config ./codex-switcher-config.json');
   console.log();
 }
 
